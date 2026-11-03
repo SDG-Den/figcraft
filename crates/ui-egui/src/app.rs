@@ -34,6 +34,10 @@ impl FigApp {
             script_fonts: None,
             cjk_checked: None,
             language: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            suite_palette: craft_ui::theme::palette::Palette::load().map(|loaded| loaded.palette),
+            #[cfg(not(target_arch = "wasm32"))]
+            palette_watcher: craft_ui::theme::palette::PaletteWatcher::from_env(),
             field_focus: false,
             panels_unsaved: false,
             control_queue: Vec::new(),
@@ -132,10 +136,19 @@ impl FigApp {
             "system" => ctx.system_theme().map(|t| t == egui::Theme::Dark).or_else(|| self.services.system_dark()).unwrap_or(false),
             _ => false,
         };
-        self.ui.dark = dark;
+        #[cfg(not(target_arch = "wasm32"))]
+        let palette = self.suite_palette.as_ref();
+        #[cfg(target_arch = "wasm32")]
+        let palette: Option<&craft_ui::theme::palette::Palette> = None;
+        let family = palette.map_or(dark, |palette| palette.is_dark());
+        let tokens = match palette {
+            Some(palette) => theme::Tokens::for_palette(dark, palette),
+            None => theme::Tokens::for_kind(dark),
+        };
+        self.ui.dark = family;
         // New files take the theme's page colour (existing pages keep theirs).
-        self.session.set_ui_dark(dark);
-        theme::apply_with(ctx, if dark { theme::Tokens::dark() } else { theme::Tokens::light() }, self.reduce_motion());
+        self.session.set_ui_dark(family);
+        theme::apply_with(ctx, tokens, self.reduce_motion());
         if self.worker.is_none() {
             self.worker = Some(render_worker::Worker::new(ctx.clone()));
         }
@@ -147,6 +160,14 @@ impl FigApp {
         let t0 = std::time::Instant::now();
         let ctx = ui.ctx().clone();
         self.ui_context = Some(ctx.clone());
+        // The shared suite palette can change under a running app. Poll it before this frame's
+        // setup, and only while the window is visible so a hidden app does not wake every 400 ms.
+        #[cfg(not(target_arch = "wasm32"))]
+        if ctx.viewport_id() == egui::ViewportId::ROOT && ctx.input(|input| input.viewport().visible().unwrap_or(true)) {
+            if let Some(loaded) = self.palette_watcher.poll(&ctx) {
+                self.suite_palette = Some(loaded.palette);
+            }
+        }
         // `App::logic` already ticked this pass; direct harnesses do not call it. The marker only
         // covers the tick that shares this pass: clearing it here keeps a direct `App::ui` harness
         // ticking on every frame (it used to tick every other frame).
