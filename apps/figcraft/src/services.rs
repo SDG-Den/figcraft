@@ -88,7 +88,13 @@ impl Desktop {
     pub fn load_from(dir: Option<PathBuf>, recovery: crate::recovery::Shared) -> Self {
         let state: Value =
             dir.as_ref().and_then(|d| std::fs::read_to_string(d.join(STATE)).ok()).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(json!({}));
-        let prefs = state.get("prefs").and_then(|p| serde_json::from_value::<Prefs>(p.clone()).ok()).map(|mut p| {
+        // Declarative settings (`settings.override.json`, or `CRAFT_SETTINGS_FILE`): merged over
+        // the saved preferences before they are read, and never written back.
+        let mut prefs_state = state.get("prefs").cloned();
+        if let Some(overlay) = dir.as_ref().and_then(|d| craft_settings::overlay::load_overlay(d)) {
+            craft_settings::overlay::merge(prefs_state.get_or_insert_with(|| json!({})), overlay);
+        }
+        let prefs = prefs_state.and_then(|p| serde_json::from_value::<Prefs>(p).ok()).map(|mut p| {
             // Recent files lived next to the preferences before they moved into them.
             if p.recent_files.is_empty()
                 && let Some(old) = state.get("recents").and_then(Value::as_array)
