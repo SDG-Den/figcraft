@@ -16,6 +16,10 @@
   # The package of this flake; `flake.nix` passes it through `_module.args`, so importing the
   # module directly needs no overlay.
   figcraftPackage ? pkgs.figcraft,
+  # `flake.nix` passes the source build and the pre-built release binary separately. Importing the
+  # module directly falls back to `figcraftPackage` and no binary.
+  figcraftSourcePackage ? figcraftPackage,
+  figcraftBinaryPackage ? null,
   ...
 }:
 
@@ -52,10 +56,24 @@ in
   options.programs.figcraft = {
     enable = mkEnableOption "FigCraft";
 
+    useBinary = mkOption {
+      type = types.bool;
+      default = true;
+      description = ''
+        Install the pre-built Linux binary from `binary-url.json` when this system has one,
+        instead of building from source. Falls back to the source build when the file is missing
+        or the system is unsupported.
+      '';
+    };
+
     package = mkOption {
       type = types.package;
-      default = figcraftPackage;
-      defaultText = lib.literalMD "the `figcraft` package of this flake";
+      default =
+        if cfg.useBinary && figcraftBinaryPackage != null then
+          figcraftBinaryPackage
+        else
+          figcraftSourcePackage;
+      defaultText = lib.literalMD "the pre-built binary from `binary-url.json`, or the source build";
       description = "The FigCraft package to install.";
     };
 

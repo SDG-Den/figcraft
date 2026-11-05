@@ -1,0 +1,24 @@
+name: Binary
+
+# Builds the Linux x86_64 tarball and commits `binary-url.json`, which the flake uses unless
+# `programs.<app>.useBinary = false`.
+on:
+  push:
+    branches: [nix-flake]
+    paths-ignore: ["binary-url.json"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: binary-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  binary:
+    uses: SDG-Den/craft-common-actions/.github/workflows/binary.yml@main
+    with:
+      app-name: figcraft
+      app-title: FigCraft
+      craft-fonts-ref: 37827adc41fd165f9a9234ac40f94dbad353aa69
