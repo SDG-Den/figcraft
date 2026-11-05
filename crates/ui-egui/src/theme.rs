@@ -2,6 +2,7 @@
 
 use std::sync::{Arc, OnceLock};
 
+use craft_ui::theme::palette::Palette;
 use egui::{Color32, Context, FontData, FontDefinitions, FontFamily, FontId, Stroke, TextStyle, Visuals};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -67,6 +68,23 @@ pub fn set_canvas_page(ctx: &Context, page: Color32) {
 /// `x` (opaque) as a document colour, for its contrast with another.
 fn c(x: Color32) -> figcraft_color::Color {
     figcraft_color::Color::new(f32::from(x.r()) / 255.0, f32::from(x.g()) / 255.0, f32::from(x.b()) / 255.0, 1.0)
+}
+
+/// `from` moved `amount` of the way to `to`.
+fn toward(from: Color32, to: Color32, amount: f32) -> Color32 {
+    from.lerp_to_gamma(to, amount.clamp(0.0, 1.0))
+}
+
+/// `color` moved toward `ink` until it reaches `target` contrast on `bg`.
+fn readable(color: Color32, bg: Color32, ink: Color32, target: f32) -> Color32 {
+    let mut out = color;
+    for step in 1..=10 {
+        if c(out).contrast(c(bg)) >= target {
+            break;
+        }
+        out = toward(color, ink, step as f32 / 10.0);
+    }
+    out
 }
 
 /// The green for overlays drawn on the page ([`set_canvas_page`]); [`ACCENT`] before a page shows.
@@ -174,6 +192,59 @@ impl Tokens {
 
     pub fn get(ctx: &Context) -> Tokens {
         ctx.data(|d| d.get_temp::<Tokens>(tokens_id())).unwrap_or_else(Tokens::light)
+    }
+
+    /// The built-in tokens for `dark`, the family the saved theme selects.
+    pub fn for_kind(dark: bool) -> Self {
+        if dark { Self::dark() } else { Self::light() }
+    }
+
+    /// Built-in tokens for `kind`, with the palette's family and core chrome.
+    ///
+    /// A palette decides dark or light: `kind` only starts the token set when it already matches.
+    pub fn for_palette(kind: bool, palette: &Palette) -> Self {
+        let family = palette.is_dark();
+        let mut t = Self::for_kind(if family == kind { kind } else { family });
+        let bg = palette.background();
+        let panel = palette.surface();
+        let surface_alt = palette.surface_alt();
+        let text = palette.text();
+        let muted = palette.text_muted();
+        let outline = palette.outline();
+        let accent = palette.accent();
+        t.bg = bg;
+        t.panel = panel;
+        t.canvas = bg;
+        t.border = outline;
+        t.border_strong = toward(outline, muted, 0.4);
+        t.text = text;
+        t.text_secondary = muted;
+        t.text_tertiary = toward(muted, bg, 0.25);
+        t.icon = text;
+        t.icon_secondary = muted;
+        t.hover = toward(panel, surface_alt, 0.6);
+        t.pressed = toward(surface_alt, outline, 0.35);
+        t.field = surface_alt;
+        t.field_hover_border = toward(outline, muted, 0.3);
+        t.accent = accent;
+        t.accent_hover = toward(accent, text, 0.2);
+        t.accent_on = palette.contrast_text();
+        t.accent_text = readable(accent, panel, text, 4.5);
+        t.selected_row = toward(bg, accent, 0.16);
+        t.selected_row_child = toward(bg, accent, 0.08);
+        t.danger = palette.danger();
+        t.success = palette.success();
+        t.warning = palette.warning();
+        t.guide = palette.danger();
+        t.tab_bar = toward(bg, outline, 0.15);
+        t.tab_active = panel;
+        t.shadow = Color32::from_black_alpha(if family { 90 } else { 40 });
+        t.menu = surface_alt;
+        t.menu_text = text;
+        t.menu_hover = accent;
+        t.menu_dim = muted;
+        t.focus = readable(accent, panel, text, 3.0);
+        t
     }
 }
 
@@ -550,5 +621,77 @@ mod tests {
                 assert!(f.has_glyphs(&font, thai), "UI font draws {thai:?}");
             }
         });
+    }
+
+    #[test]
+    fn palette_maps_dark_core_chrome() {
+        let palette = Palette::dark();
+        let t = Tokens::for_palette(true, &palette);
+        assert!(t.dark);
+        assert_eq!(t.bg, palette.background());
+        assert_eq!(t.panel, palette.surface());
+        assert_eq!(t.canvas, palette.background());
+        assert_eq!(t.border, palette.outline());
+        assert_eq!(t.text, palette.text());
+        assert_eq!(t.text_secondary, palette.text_muted());
+        assert_eq!(t.icon, palette.text());
+        assert_eq!(t.field, palette.surface_alt());
+        assert_eq!(t.accent, palette.accent());
+        assert_eq!(t.accent_on, palette.contrast_text());
+        assert_eq!(t.danger, palette.danger());
+        assert_eq!(t.success, palette.success());
+        assert_eq!(t.warning, palette.warning());
+        assert_eq!(t.guide, palette.danger());
+        assert_eq!(t.menu_text, palette.text());
+    }
+
+    #[test]
+    fn palette_maps_light_core_chrome() {
+        let palette = Palette::light();
+        let t = Tokens::for_palette(false, &palette);
+        assert!(!t.dark);
+        assert_eq!(t.bg, palette.background());
+        assert_eq!(t.panel, palette.surface());
+        assert_eq!(t.text, palette.text());
+        assert_eq!(t.accent, palette.accent());
+        assert_eq!(t.accent_on, palette.contrast_text());
+    }
+
+    #[test]
+    fn palette_family_overrides_the_saved_kind() {
+        let dark = Palette::dark();
+        let from_light = Tokens::for_palette(false, &dark);
+        assert!(from_light.dark, "a dark palette wins over the saved light theme");
+        assert_eq!(from_light.bg, dark.background());
+        assert_ne!(from_light.bg, Tokens::light().bg);
+
+        let light = Palette::light();
+        let from_dark = Tokens::for_palette(true, &light);
+        assert!(!from_dark.dark, "a light palette wins over the saved dark theme");
+        assert_eq!(from_dark.bg, light.background());
+    }
+
+    #[test]
+    fn built_in_tokens_are_the_fallback() {
+        assert_eq!(Tokens::for_kind(false), Tokens::light());
+        assert_eq!(Tokens::for_kind(true), Tokens::dark());
+        let t = Tokens::for_palette(true, &Palette::dark());
+        assert_eq!(t.component, Tokens::dark().component);
+        assert_eq!(t.component_row, Tokens::dark().component_row);
+    }
+
+    #[test]
+    fn palette_accent_text_stays_readable() {
+        for palette in [Palette::dark(), Palette::light()] {
+            let t = Tokens::for_palette(true, &palette);
+            let ratio = c(t.accent_on).contrast(c(t.accent));
+            assert!(ratio >= 4.5, "ink on the accent is {ratio:.2}:1");
+            let ratio = c(t.accent_text).contrast(c(t.panel));
+            assert!(ratio >= 4.5, "accent text on the panel is {ratio:.2}:1");
+            for bg in [t.bg, t.panel, t.field, t.selected_row] {
+                let ratio = c(t.text).contrast(c(bg));
+                assert!(ratio >= 3.0, "text on {bg:?} is {ratio:.2}:1");
+            }
+        }
     }
 }

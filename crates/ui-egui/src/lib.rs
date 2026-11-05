@@ -742,6 +742,13 @@ pub struct FigApp {
     cjk_checked: Option<(u64, Arc<figcraft_doc::Document>)>,
     /// The language preference the UI strings follow (applied when it changes).
     language: Option<String>,
+    /// The shared suite palette read at startup, when one exists (native only). It overrides the
+    /// saved dark/light family and the core chrome colours.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub suite_palette: Option<craft_ui::theme::palette::Palette>,
+    /// Watches the palette file for changes; polled only while the window is visible (native only).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub palette_watcher: craft_ui::theme::palette::PaletteWatcher,
     /// A field had the keyboard when the last frame ended.
     field_focus: bool,
     /// A panel's width changed and isn't kept in the preferences yet (its edge is being dragged).
